@@ -1133,6 +1133,44 @@ describe("preview and active route policies", () => {
       expect(fixture.queries.length > queries).toBe(!replayed);
     },
   );
+
+  it("replays procedure_pseudo_code without document selector from snapshot", async () => {
+    const fixture = await createSnapshotReplayFixture("rea-decompile-replay-");
+    const provider = fixture.createProvider({
+      supportedOperations: [...operations, "procedure_pseudo_code"],
+    });
+    const dependencies = fixture.dependencies(provider);
+    const options = { snapshotPath: fixture.snapshotPath };
+    const first = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "procedure_pseudo_code",
+        { procedure: "0x1000" },
+        options,
+      ).then(projectCliAnalysisResult),
+    );
+    expect(first).toMatchObject({
+      operation: "procedure_pseudo_code",
+      normalized_result: "return 0;",
+    });
+    expect(fixture.starts).toHaveLength(1);
+    expect(fixture.queries.map((q) => q.operation)).toContain(
+      "procedure_pseudo_code",
+    );
+
+    const second = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "procedure_pseudo_code",
+        { procedure: "0x1000" },
+        options,
+      ).then(projectCliAnalysisResult),
+    );
+    expect(second).toEqual(first);
+    expect(fixture.starts).toHaveLength(1);
+  });
 });
 
 describe("snapshot replay provider identity", () => {
