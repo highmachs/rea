@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
+import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
+import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 
 it.each(
   [
@@ -67,3 +69,60 @@ it.each(["{}", "unknownSource"])(
     );
   },
 );
+
+it("retains resolved destructuring relation when a property is mutated after destructuring", () => {
+  const graph = graphForJavaScript(`
+    const config = { mode: "strict" };
+    const { mode } = config;
+    config.mode = "loose";
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "mode",
+  );
+  expect(target).toBeDefined();
+  const relations = graph.relations.filter(
+    (relation) =>
+      relation.relation === "destructures" &&
+      relation.target_node_id === target?.node_id,
+  );
+  expect(relations).toHaveLength(1);
+  expect(relations[0]?.resolution).toBe("resolved");
+  expect(
+    graph.unknowns.filter((u) => u.relation_kinds.includes("destructures")),
+  ).toHaveLength(0);
+
+  const query = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: target!.node_id },
+      direction: "backward-provenance",
+    }),
+  );
+  expect(
+    query.relations.some(
+      (r) => r.relation === "destructures" && r.resolution === "resolved",
+    ),
+  ).toBe(true);
+  expect(
+    query.nodes.some((n) => n.kind === "property-slot" && n.label === "mode"),
+  ).toBe(true);
+});
+
+it("keeps destructuring relation candidate when a property is mutated before destructuring", () => {
+  const graph = graphForJavaScript(`
+    const config = { mode: "strict" };
+    config.mode = "loose";
+    const { mode } = config;
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "mode",
+  );
+  expect(target).toBeDefined();
+  const relations = graph.relations.filter(
+    (relation) =>
+      relation.relation === "destructures" &&
+      relation.target_node_id === target?.node_id,
+  );
+  expect(relations).toHaveLength(1);
+  expect(relations[0]?.resolution).toBe("candidate");
+});

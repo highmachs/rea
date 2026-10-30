@@ -22,12 +22,44 @@ import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.j
 export function* projectSemanticObjects(
   context: SemanticFlowProjectionContext,
 ): Generator<void, void> {
+  const bindings = new Map(
+    context.ir.bindings.map((binding) => [binding.bindingId, binding]),
+  );
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
+  const precedingWritesByBinding = new Map<
+    string,
+    { readonly propertyPath: readonly string[] | null }[]
+  >();
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
-    const target = objectTarget(context, values, operation);
+    const binding =
+      operation.objectBindingId === null
+        ? undefined
+        : bindings.get(operation.objectBindingId);
+    const bindingNode =
+      operation.objectBindingId === null
+        ? undefined
+        : context.bindingNodes.get(operation.objectBindingId);
+    const sameCallable =
+      (bindingNode?.function_node_id ?? null) === operation.ownerCallableId;
+    const precedingWrites =
+      operation.objectBindingId === null
+        ? undefined
+        : precedingWritesByBinding.get(operation.objectBindingId);
+    const hasPrecedingWrite =
+      !sameCallable ||
+      (precedingWrites !== undefined &&
+        precedingWrites.some((write) =>
+          propertyAffectedByWrite(write.propertyPath, operation.propertyPath),
+        ));
+    const target = objectTarget(
+      context,
+      values,
+      operation,
+      !hasPrecedingWrite ? binding?.initializerValue : undefined,
+    );
     const occurrence = addObjectOccurrence(
       context,
       operation,
@@ -50,8 +82,31 @@ export function* projectSemanticObjects(
     });
     if (!resolved)
       addObjectUnknown(context, operation, target.slot ?? occurrence, target);
+    if (operation.kind === "write" && operation.objectBindingId !== null) {
+      let writes = precedingWritesByBinding.get(operation.objectBindingId);
+      if (writes === undefined) {
+        writes = [];
+        precedingWritesByBinding.set(operation.objectBindingId, writes);
+      }
+      writes.push({ propertyPath: operation.propertyPath });
+    }
   }
 }
+
+const isPathPrefix = (
+  prefix: readonly string[],
+  path: readonly string[],
+): boolean =>
+  prefix.length <= path.length &&
+  prefix.every((segment, index) => segment === path[index]);
+
+const propertyAffectedByWrite = (
+  writePath: readonly string[] | null,
+  readPath: readonly string[] | null,
+): boolean => {
+  if (writePath === null || readPath === null) return true;
+  return isPathPrefix(writePath, readPath) || isPathPrefix(readPath, writePath);
+};
 
 const OBJECT_RELATIONS = {
   read: "reads-property",
@@ -72,15 +127,17 @@ const objectTarget = (
   context: SemanticFlowProjectionContext,
   values: ReadonlyMap<string, JavaScriptSemanticValue>,
   operation: JavaScriptSemanticObjectOperation,
+  readPositionValue?: JavaScriptSemanticValue,
 ): ObjectTarget => {
   const binding =
     operation.objectBindingId === null
       ? undefined
       : context.bindingNodes.get(operation.objectBindingId);
   const value =
-    operation.objectBindingId === null
+    readPositionValue ??
+    (operation.objectBindingId === null
       ? undefined
-      : values.get(operation.objectBindingId);
+      : values.get(operation.objectBindingId));
   if (
     operation.objectBindingId === null ||
     operation.propertyPath === null ||
