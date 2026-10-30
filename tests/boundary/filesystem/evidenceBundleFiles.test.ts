@@ -174,11 +174,21 @@ it("publishes partial Evidence bundle on failure with summary detail", async () 
       },
     },
   });
+  expect(
+    (
+      delivered as {
+        details: { partial_observation: { predicate_type: string } };
+      }
+    ).details.partial_observation.predicate_type,
+  ).toBe("rea.analysis-view");
   const saved = await readEvidenceBundle(outputPath);
   if (!saved.ok) throw saved.error;
   expect(saved.value.records).toHaveLength(1);
   expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
   expect(saved.value.records[0]?.caller_input_path).toBe("./src/index.js");
+  expect(saved.value.records[0]?.predicate_type).toBe(
+    "rea.javascript-application-analysis",
+  );
 });
 
 it("retains the analysis error and attaches publication_error when partial bundle save fails", async () => {
@@ -222,6 +232,76 @@ it("retains the analysis error and attaches publication_error when partial bundl
       },
     },
   });
+  expect(
+    (
+      delivered as {
+        details: {
+          publication_error: { details?: { partial_observation?: unknown } };
+        };
+      }
+    ).details.publication_error.details?.partial_observation,
+  ).toBeUndefined();
+});
+
+it("redacts sensitive path from committed receipt on late cleanup interrupt", async () => {
+  const root = await createTestTempDirectory("rea-partial-sensitive-");
+  const partial = analysisViewJavaScriptEvidence();
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const secret = "supersecret";
+  const outputPath = join(root, `${secret}.json`);
+  const controller = new AbortController();
+  const close = OwnedStagedOutput.prototype.close;
+  const seam = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementationOnce(async function (this: OwnedStagedOutput) {
+      await close.call(this);
+      controller.abort(new Error("cleanup interrupted"));
+    });
+  try {
+    const delivered = await publishCliAnalysisEvidence(
+      { ok: false, error: failure },
+      {
+        providerId: "rea-javascript-application",
+        operation: "analyze_javascript_application",
+        signal: controller.signal,
+        detail: "complete",
+        evidenceOutput: outputPath,
+        sensitiveValues: [secret],
+      },
+    );
+    expect(delivered).toMatchObject({
+      error: "JavaScript application analysis failed",
+      code: "provider_timeout",
+      details: {
+        operation: "analyze_javascript_application",
+        publication_error: {
+          code: "cancelled",
+        },
+        evidence_bundle: {
+          bytes: expect.any(Number),
+        },
+      },
+    });
+    expect(
+      (
+        delivered as {
+          details: { evidence_bundle?: { path?: string } };
+        }
+      ).details.evidence_bundle?.path,
+    ).toBeUndefined();
+  } finally {
+    seam.mockRestore();
+  }
 });
 
 it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {

@@ -194,7 +194,21 @@ const extractPartialEvidence = (
     : { errorRecord, partialEvidence };
 };
 
-const committedReceiptFromError = (error: unknown): JsonValue | undefined => {
+const formatEvidenceBundleReceipt = (
+  bundle: { readonly path: string; readonly bytes: number },
+  sensitiveValues?: readonly string[],
+): { readonly path?: string; readonly bytes: number } => ({
+  ...(sensitiveValues?.some(
+    (literal) => literal !== "" && bundle.path.includes(literal),
+  )
+    ? {}
+    : { path: bundle.path }),
+  bytes: bundle.bytes,
+});
+
+const committedReceiptFromError = (
+  error: unknown,
+): { readonly path: string; readonly bytes: number } | undefined => {
   if (
     typeof error === "object" &&
     error !== null &&
@@ -206,11 +220,47 @@ const committedReceiptFromError = (error: unknown): JsonValue | undefined => {
         string,
         unknown
       >)
-  )
-    return (
+  ) {
+    const raw = (
       (error as Record<string, unknown>).diagnostics as Record<string, unknown>
-    ).evidence_bundle as JsonValue;
+    ).evidence_bundle;
+    if (
+      typeof raw === "object" &&
+      raw !== null &&
+      "path" in raw &&
+      typeof (raw as Record<string, unknown>).path === "string" &&
+      "bytes" in raw &&
+      typeof (raw as Record<string, unknown>).bytes === "number"
+    )
+      return {
+        path: (raw as Record<string, unknown>).path as string,
+        bytes: (raw as Record<string, unknown>).bytes as number,
+      };
+  }
   return undefined;
+};
+
+const sanitizeSaveError = (
+  error: AnalysisError,
+  sensitiveValues?: readonly string[],
+): JsonValue => {
+  const rawSaveError = projectAnalysisError(
+    redactExplicitFailure(error, sensitiveValues ?? []),
+  );
+  if (
+    rawSaveError.details !== undefined &&
+    typeof rawSaveError.details === "object" &&
+    rawSaveError.details !== null &&
+    "partial_observation" in rawSaveError.details
+  ) {
+    const { partial_observation: _, ...restDetails } =
+      rawSaveError.details as Record<string, JsonValue>;
+    return {
+      ...rawSaveError,
+      details: restDetails,
+    };
+  }
+  return rawSaveError;
 };
 
 const publishPartialCliAnalysisEvidence = async (
@@ -258,10 +308,12 @@ const publishPartialCliAnalysisEvidence = async (
     signal,
   });
   if (!published.ok) {
-    const saveError = projectAnalysisError(
-      redactExplicitFailure(published.error, input.sensitiveValues ?? []),
-    );
-    const committedReceipt = committedReceiptFromError(published.error);
+    const saveError = sanitizeSaveError(published.error, input.sensitiveValues);
+    const committedRaw = committedReceiptFromError(published.error);
+    const committedReceipt =
+      committedRaw !== undefined
+        ? formatEvidenceBundleReceipt(committedRaw, input.sensitiveValues)
+        : undefined;
     const updatedDetails: { [key: string]: JsonValue } = {
       ...(errorRecord.details as { [key: string]: JsonValue }),
       publication_error: saveError,
@@ -274,15 +326,10 @@ const publishPartialCliAnalysisEvidence = async (
       details: updatedDetails,
     };
   }
-  const receipt = {
-    ...(input.sensitiveValues?.some(
-      (literal) =>
-        literal !== "" && published.value.evidenceBundle.path.includes(literal),
-    )
-      ? {}
-      : { path: published.value.evidenceBundle.path }),
-    bytes: published.value.evidenceBundle.bytes,
-  };
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
   recordCliEvidencePublication(receipt);
   const updatedDetails: { [key: string]: JsonValue } = {
     ...(errorRecord.details as { [key: string]: JsonValue }),
@@ -349,15 +396,10 @@ export const publishCliAnalysisEvidence = async (
     signal,
   });
   if (!published.ok) return projectFailure(published.error);
-  const receipt = {
-    ...(input.sensitiveValues?.some(
-      (literal) =>
-        literal !== "" && published.value.evidenceBundle.path.includes(literal),
-    )
-      ? {}
-      : { path: published.value.evidenceBundle.path }),
-    bytes: published.value.evidenceBundle.bytes,
-  };
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
   recordCliEvidencePublication(receipt);
   return detail === "summary"
     ? { summary: published.value.delivered, evidence_bundle: receipt }
