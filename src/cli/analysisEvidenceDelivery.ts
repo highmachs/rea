@@ -194,6 +194,25 @@ const extractPartialEvidence = (
     : { errorRecord, partialEvidence };
 };
 
+const committedReceiptFromError = (error: unknown): JsonValue | undefined => {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "diagnostics" in error &&
+    typeof (error as Record<string, unknown>).diagnostics === "object" &&
+    (error as Record<string, unknown>).diagnostics !== null &&
+    "evidence_bundle" in
+      ((error as Record<string, unknown>).diagnostics as Record<
+        string,
+        unknown
+      >)
+  )
+    return (
+      (error as Record<string, unknown>).diagnostics as Record<string, unknown>
+    ).evidence_bundle as JsonValue;
+  return undefined;
+};
+
 const publishPartialCliAnalysisEvidence = async (
   failure: JsonValue,
   input: CliEvidenceDelivery,
@@ -238,7 +257,23 @@ const publishPartialCliAnalysisEvidence = async (
     operation,
     signal,
   });
-  if (!published.ok) return failure;
+  if (!published.ok) {
+    const saveError = projectAnalysisError(
+      redactExplicitFailure(published.error, input.sensitiveValues ?? []),
+    );
+    const committedReceipt = committedReceiptFromError(published.error);
+    const updatedDetails: { [key: string]: JsonValue } = {
+      ...(errorRecord.details as { [key: string]: JsonValue }),
+      publication_error: saveError,
+      ...(committedReceipt !== undefined
+        ? { evidence_bundle: committedReceipt }
+        : {}),
+    };
+    return {
+      ...errorRecord,
+      details: updatedDetails,
+    };
+  }
   const receipt = {
     ...(input.sensitiveValues?.some(
       (literal) =>
@@ -254,7 +289,7 @@ const publishPartialCliAnalysisEvidence = async (
     evidence_bundle: receipt,
   };
   if (detail === "summary" && delivered.ok) {
-    updatedDetails.partial_observation = delivered.value;
+    updatedDetails.partial_observation = selected;
   }
   return {
     ...errorRecord,

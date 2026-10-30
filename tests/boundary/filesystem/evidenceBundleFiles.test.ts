@@ -48,7 +48,10 @@ import {
   serializeEvidenceBundle,
   DuplicateEvidenceRecordError,
 } from "../../../src/domain/evidenceBundle.js";
-import { analysisViewLayoutEvidence } from "../../fixtures/analysisView.js";
+import {
+  analysisViewJavaScriptEvidence,
+  analysisViewLayoutEvidence,
+} from "../../fixtures/analysisView.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
@@ -131,10 +134,9 @@ it("publishes partial Evidence bundle on failure when evidenceOutput is provided
 
 it("publishes partial Evidence bundle on failure with summary detail", async () => {
   const root = await createTestTempDirectory("rea-partial-summary-");
-  const partial = createEvidence(
-    undefined,
-    { id: "fixture", name: "Fixture", version: "1" },
-    { operation: "health", parameters: {}, result: { partial: true } },
+  const partial = withEvidenceCallerInputPath(
+    analysisViewJavaScriptEvidence(),
+    "./src/index.js",
   );
   const failure = {
     error: "JavaScript application analysis failed",
@@ -151,7 +153,7 @@ it("publishes partial Evidence bundle on failure with summary detail", async () 
   const delivered = await publishCliAnalysisEvidence(
     { ok: false, error: failure },
     {
-      providerId: "fixture",
+      providerId: "rea-javascript-application",
       operation: "analyze_javascript_application",
       signal: new AbortController().signal,
       detail: "summary",
@@ -167,12 +169,59 @@ it("publishes partial Evidence bundle on failure with summary detail", async () 
         path: outputPath,
         bytes: expect.any(Number),
       },
+      partial_observation: {
+        caller_input_path: "./src/index.js",
+      },
     },
   });
   const saved = await readEvidenceBundle(outputPath);
   if (!saved.ok) throw saved.error;
   expect(saved.value.records).toHaveLength(1);
   expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
+  expect(saved.value.records[0]?.caller_input_path).toBe("./src/index.js");
+});
+
+it("retains the analysis error and attaches publication_error when partial bundle save fails", async () => {
+  const root = await createTestTempDirectory("rea-partial-exists-");
+  const partial = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "health", parameters: {}, result: { partial: true } },
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "existing.json");
+  await writeFile(outputPath, "already exists");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "fixture",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      publication_error: {
+        code: "invalid_request",
+        message: expect.stringContaining("already exists"),
+      },
+    },
+  });
 });
 
 it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {
