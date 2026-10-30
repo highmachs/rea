@@ -8,11 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
 const compilerProbe = spawnSync("g++", ["--version"], { stdio: "ignore" });
-const compilerMissing =
-  compilerProbe.status !== 0 ||
-  (compilerProbe.error instanceof Error &&
-    "code" in compilerProbe.error &&
-    compilerProbe.error.code === "ENOENT");
+const compilerMissing = compilerProbe.status !== 0;
 
 describe.skipIf(process.platform === "win32" && compilerMissing)(
   "Windows native handle close gate",
