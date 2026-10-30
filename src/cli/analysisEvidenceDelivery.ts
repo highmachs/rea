@@ -4,6 +4,7 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js
 import { z } from "incur";
 import {
   parseEvidence,
+  tryParseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
@@ -169,6 +170,98 @@ export const deliverCliAnalysisEvidence = async (
   });
 };
 
+const extractPartialEvidence = (
+  failure: JsonValue,
+):
+  | {
+      errorRecord: { [key: string]: JsonValue };
+      partialEvidence: Evidence;
+    }
+  | undefined => {
+  if (typeof failure !== "object" || failure === null || Array.isArray(failure))
+    return undefined;
+  const errorRecord = failure as { [key: string]: JsonValue };
+  const details =
+    typeof errorRecord.details === "object" &&
+    errorRecord.details !== null &&
+    !Array.isArray(errorRecord.details)
+      ? (errorRecord.details as { [key: string]: JsonValue })
+      : undefined;
+  if (details?.partial_observation === undefined) return undefined;
+  const partialEvidence = tryParseEvidence(details.partial_observation);
+  return partialEvidence === undefined
+    ? undefined
+    : { errorRecord, partialEvidence };
+};
+
+const publishPartialCliAnalysisEvidence = async (
+  failure: JsonValue,
+  input: CliEvidenceDelivery,
+): Promise<JsonValue> => {
+  const { operation, signal, detail, evidenceOutput } = input;
+  if (evidenceOutput === undefined) return failure;
+  const extracted = extractPartialEvidence(failure);
+  if (extracted === undefined) return failure;
+  const { errorRecord, partialEvidence } = extracted;
+
+  const delivered =
+    detail === "summary"
+      ? inspectAnalysisViewValidated({
+          source: { kind: "inline", evidence: partialEvidence },
+          view: input.view ?? { kind: "summary" },
+        })
+      : ok(partialEvidence);
+  const selected =
+    detail === "summary" &&
+    partialEvidence.caller_input_path !== undefined &&
+    delivered.ok
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          partialEvidence.caller_input_path,
+        )
+      : delivered.ok
+        ? delivered.value
+        : partialEvidence;
+  const inspectionSources = analysisEvidenceSources(partialEvidence);
+  if (!inspectionSources.ok) return failure;
+  const published = await publishEvidenceDelivery({
+    bundle: createEvidenceBundle([
+      ...new Map(
+        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+          (record) => [record.evidence_id, record],
+        ),
+      ).values(),
+    ]),
+    complete: partialEvidence,
+    delivered: selected,
+    outputPath: absoluteCallerPath(evidenceOutput),
+    operation,
+    signal,
+  });
+  if (!published.ok) return failure;
+  const receipt = {
+    ...(input.sensitiveValues?.some(
+      (literal) =>
+        literal !== "" && published.value.evidenceBundle.path.includes(literal),
+    )
+      ? {}
+      : { path: published.value.evidenceBundle.path }),
+    bytes: published.value.evidenceBundle.bytes,
+  };
+  recordCliEvidencePublication(receipt);
+  const updatedDetails: { [key: string]: JsonValue } = {
+    ...(errorRecord.details as { [key: string]: JsonValue }),
+    evidence_bundle: receipt,
+  };
+  if (detail === "summary" && delivered.ok) {
+    updatedDetails.partial_observation = delivered.value;
+  }
+  return {
+    ...errorRecord,
+    details: updatedDetails,
+  };
+};
+
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
   result: Result<Evidence, JsonValue>,
@@ -179,7 +272,7 @@ export const publishCliAnalysisEvidence = async (
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
     );
-  if (!result.ok) return result.error;
+  if (!result.ok) return publishPartialCliAnalysisEvidence(result.error, input);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {

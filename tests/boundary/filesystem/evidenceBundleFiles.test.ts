@@ -83,6 +83,98 @@ it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", 
   expect(await readdir(root)).toEqual([]);
 });
 
+it("publishes partial Evidence bundle on failure when evidenceOutput is provided", async () => {
+  const root = await createTestTempDirectory("rea-partial-delivery-");
+  const partial = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "health", parameters: {}, result: { partial: true } },
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "partial.json");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "fixture",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      evidence_bundle: {
+        path: outputPath,
+        bytes: expect.any(Number),
+      },
+    },
+  });
+  const saved = await readEvidenceBundle(outputPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.records).toHaveLength(1);
+  expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
+});
+
+it("publishes partial Evidence bundle on failure with summary detail", async () => {
+  const root = await createTestTempDirectory("rea-partial-summary-");
+  const partial = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "health", parameters: {}, result: { partial: true } },
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "summary.json");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "fixture",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "summary",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      evidence_bundle: {
+        path: outputPath,
+        bytes: expect.any(Number),
+      },
+    },
+  });
+  const saved = await readEvidenceBundle(outputPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.records).toHaveLength(1);
+  expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
+});
+
 it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {
   const root = await createTestTempDirectory("rea-repeated-delivery-");
   const input = join(root, "input.txt");
