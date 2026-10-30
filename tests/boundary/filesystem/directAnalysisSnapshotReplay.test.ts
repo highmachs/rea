@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { decompileAll } from "../../../src/application/decompileDirectory/decompileAll.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
@@ -232,6 +233,7 @@ const makeProvider = (
             search_procedures: [{ address: "0x1000", value: "fixture" }],
             xrefs: [],
             resolve_containing_procedure: null,
+            procedure_info: null,
             procedure_pseudo_code: "return 0;",
           };
           if (!Object.hasOwn(results, operation))
@@ -1170,6 +1172,43 @@ describe("preview and active route policies", () => {
     );
     expect(second).toEqual(first);
     expect(fixture.starts).toHaveLength(1);
+  });
+
+  it("does not retain bulk decompile_all procedure bodies in BinarySession ledger", async () => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-decompile-all-ledger-",
+    );
+    const provider = fixture.createProvider({
+      supportedOperations: [
+        ...operations,
+        "procedure_info",
+        "procedure_pseudo_code",
+      ],
+    });
+    const session = createTestBinarySession(provider);
+    try {
+      const opened = await session.open(fixture.path);
+      expect(opened.ok).toBe(true);
+      const outDir = join(dirname(fixture.path), "export-out");
+      const result = await session.withAdmittedAnalysis(
+        "decompile_all",
+        undefined,
+        (analysis) =>
+          decompileAll(
+            analysis,
+            { output_directory: outDir, layout: "address", resume: false },
+            undefined,
+          ),
+      );
+      expect(result.ok).toBe(true);
+      const records = session.exportEvidenceBundle().records;
+      const procedureBodies = records.filter(
+        (r) => r.operation === "procedure_pseudo_code",
+      );
+      expect(procedureBodies).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
   });
 });
 

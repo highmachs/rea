@@ -99,7 +99,9 @@ const replayDocumentSelected = (
 /**
  * Caller and callee walks omit `document`. Their observations are still
  * Evidence. Decompilation of an explicit procedure (`procedure_pseudo_code`)
- * also retains and replays without a document selector.
+ * also retains and replays without a document selector. Bulk exports
+ * (`decompile_all`) stream bodies to disk with `retainEvidence: false` so they
+ * do not accumulate in the session ledger.
  */
 const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
   new Set(["procedure_callers", "procedure_callees"]);
