@@ -1173,7 +1173,9 @@ describe("preview and active route policies", () => {
     expect(second).toEqual(first);
     expect(fixture.starts).toHaveLength(1);
   });
+});
 
+describe("bulk export session evidence retention", () => {
   it("does not retain bulk decompile_all procedure bodies in BinarySession ledger", async () => {
     const fixture = await createSnapshotReplayFixture(
       "rea-decompile-all-ledger-",
@@ -1200,7 +1202,11 @@ describe("preview and active route policies", () => {
             undefined,
           ),
       );
-      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      if (!result.value.ok) throw result.value.error;
+      expect(result.value.value).toMatchObject({
+        counts: { written: 1, failed: 0 },
+      });
       const records = session.exportEvidenceBundle().records;
       const procedureBodies = records.filter(
         (r) => r.operation === "procedure_pseudo_code",
