@@ -57,6 +57,17 @@ it("advertises strict provider-free contracts and returns packaged guide results
   expect(listed.tools.map(({ name }) => name)).toEqual(
     expect.arrayContaining(["search_guidance", "read_guidance_section"]),
   );
+  const searchTool = listed.tools.find(
+    ({ name }) => name === "search_guidance",
+  );
+  expect(searchTool?.outputSchema).toMatchObject({ type: "object" });
+  expect(searchTool?.outputSchema?.required).not.toEqual(["result"]);
+
+  const readTool = listed.tools.find(
+    ({ name }) => name === "read_guidance_section",
+  );
+  expect(readTool?.outputSchema).toMatchObject({ type: "object" });
+  expect(readTool?.outputSchema?.required).not.toEqual(["result"]);
   expect(
     searchGuidanceInputSchema.safeParse({
       query: "module",
@@ -78,10 +89,8 @@ it("advertises strict provider-free contracts and returns packaged guide results
     arguments: { query: "exact JavaScript module" },
   });
   expect(response.isError).not.toBe(true);
-  const parsed = guidanceOutput(
-    searchGuidanceOutputSchema,
-    response.structuredContent,
-  );
+  expect(response.structuredContent).not.toHaveProperty("result");
+  const parsed = searchGuidanceOutputSchema.parse(response.structuredContent);
   expect(parsed).toMatchObject({
     status: "matches",
     source: "installed_rea_guidance",
@@ -96,8 +105,9 @@ it("advertises strict provider-free contracts and returns packaged guide results
     arguments: { locator: selected?.locator },
   });
   expect(section.isError).not.toBe(true);
+  expect(section.structuredContent).not.toHaveProperty("result");
   expect(
-    guidanceOutput(readGuidanceSectionOutputSchema, section.structuredContent),
+    readGuidanceSectionOutputSchema.parse(section.structuredContent),
   ).toMatchObject({
     status: "section",
     heading: selected?.heading,
