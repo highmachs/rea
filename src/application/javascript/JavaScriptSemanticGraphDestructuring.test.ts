@@ -208,3 +208,24 @@ it("keeps destructuring relation candidate when a property is mutated inside a l
   expect(relations).toHaveLength(1);
   expect(relations[0]?.resolution).toBe("candidate");
 });
+
+it("keeps destructuring relation candidate when property was deleted before destructuring even with later variable assignment", () => {
+  const graph = graphForJavaScript(`
+    const config = { mode: "strict" };
+    delete config.mode;
+    let { mode } = config;
+    mode = "later";
+    config.mode = "loose";
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "mode",
+  );
+  expect(target).toBeDefined();
+  const relations = graph.relations.filter(
+    (relation) =>
+      relation.relation === "destructures" &&
+      relation.target_node_id === target?.node_id,
+  );
+  expect(relations).toHaveLength(1);
+  expect(relations[0]?.resolution).toBe("candidate");
+});

@@ -45,15 +45,10 @@ export function* projectSemanticObjects(
           null);
     const sameCallable =
       (bindingNode?.function_node_id ?? null) === operationFunctionNodeId;
-    const targetBinding =
-      operation.targetBindingId === null
-        ? undefined
-        : bindings.get(operation.targetBindingId);
     const readPositionValue =
       sameCallable &&
       operation.kind === "destructure" &&
-      targetBinding !== undefined &&
-      targetBinding.value.status !== "unknown"
+      operation.readSlotPresence === "present"
         ? binding?.initializerValue
         : undefined;
     const target = objectTarget(context, values, operation, readPositionValue);
