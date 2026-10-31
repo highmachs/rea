@@ -197,7 +197,7 @@ const collectDestructuring = (
       source.path === null ? null : [...source.path, ...path];
     const readSlotPresence =
       readSourceValue !== undefined && propertyPath !== null
-        ? semanticSlotAtPath(readSourceValue, propertyPath).presence
+        ? semanticSlotAtPath(readSourceValue, path).presence
         : undefined;
     addObjectOperation(
       {

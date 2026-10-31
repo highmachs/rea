@@ -229,3 +229,22 @@ it("keeps destructuring relation candidate when property was deleted before dest
   expect(relations).toHaveLength(1);
   expect(relations[0]?.resolution).toBe("candidate");
 });
+
+it("resolves destructuring relation for nested member expression initializer mutated later", () => {
+  const graph = graphForJavaScript(`
+    const config = { nested: { mode: "strict" } };
+    const { mode } = config.nested;
+    config.nested.mode = "loose";
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "mode",
+  );
+  expect(target).toBeDefined();
+  const relations = graph.relations.filter(
+    (relation) =>
+      relation.relation === "destructures" &&
+      relation.target_node_id === target?.node_id,
+  );
+  expect(relations).toHaveLength(1);
+  expect(relations[0]?.resolution).toBe("resolved");
+});
