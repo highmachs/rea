@@ -28,10 +28,6 @@ export function* projectSemanticObjects(
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
-  const precedingWritesByBinding = new Map<
-    string,
-    { readonly propertyPath: readonly string[] | null }[]
-  >();
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
     const binding =
@@ -42,24 +38,25 @@ export function* projectSemanticObjects(
       operation.objectBindingId === null
         ? undefined
         : context.bindingNodes.get(operation.objectBindingId);
+    const operationFunctionNodeId =
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null);
     const sameCallable =
-      (bindingNode?.function_node_id ?? null) === operation.ownerCallableId;
-    const precedingWrites =
-      operation.objectBindingId === null
+      (bindingNode?.function_node_id ?? null) === operationFunctionNodeId;
+    const targetBinding =
+      operation.targetBindingId === null
         ? undefined
-        : precedingWritesByBinding.get(operation.objectBindingId);
-    const hasPrecedingWrite =
-      !sameCallable ||
-      (precedingWrites !== undefined &&
-        precedingWrites.some((write) =>
-          propertyAffectedByWrite(write.propertyPath, operation.propertyPath),
-        ));
-    const target = objectTarget(
-      context,
-      values,
-      operation,
-      !hasPrecedingWrite ? binding?.initializerValue : undefined,
-    );
+        : bindings.get(operation.targetBindingId);
+    const readPositionValue =
+      sameCallable &&
+      operation.kind === "destructure" &&
+      targetBinding !== undefined &&
+      targetBinding.value.status !== "unknown"
+        ? binding?.initializerValue
+        : undefined;
+    const target = objectTarget(context, values, operation, readPositionValue);
     const occurrence = addObjectOccurrence(
       context,
       operation,
@@ -82,31 +79,8 @@ export function* projectSemanticObjects(
     });
     if (!resolved)
       addObjectUnknown(context, operation, target.slot ?? occurrence, target);
-    if (operation.kind === "write" && operation.objectBindingId !== null) {
-      let writes = precedingWritesByBinding.get(operation.objectBindingId);
-      if (writes === undefined) {
-        writes = [];
-        precedingWritesByBinding.set(operation.objectBindingId, writes);
-      }
-      writes.push({ propertyPath: operation.propertyPath });
-    }
   }
 }
-
-const isPathPrefix = (
-  prefix: readonly string[],
-  path: readonly string[],
-): boolean =>
-  prefix.length <= path.length &&
-  prefix.every((segment, index) => segment === path[index]);
-
-const propertyAffectedByWrite = (
-  writePath: readonly string[] | null,
-  readPath: readonly string[] | null,
-): boolean => {
-  if (writePath === null || readPath === null) return true;
-  return isPathPrefix(writePath, readPath) || isPathPrefix(readPath, writePath);
-};
 
 const OBJECT_RELATIONS = {
   read: "reads-property",
