@@ -1530,7 +1530,7 @@ export class GdbSessionManager {
             // If MI synchronization is lost, stop only the owned debugger process.
           }
           const stopped = await this.#stopDebuggerOnly(session, {
-            force: true,
+            force: session.protocolError !== undefined,
           });
           if (stopped.status === "incomplete")
             return err(
@@ -1887,9 +1887,14 @@ export class GdbSessionManager {
         : session.protocolError!,
       {
         cause,
-        userMessage: session.protocolError!,
+        userMessage:
+          stopped.status === "incomplete"
+            ? `${session.protocolError} The owned process could not be confirmed stopped: ${stopped.reason}`
+            : session.protocolError!,
         remediationAction:
-          "The GDB session protocol failed and the session was closed. Start a new GDB session to continue.",
+          stopped.status === "incomplete"
+            ? `The GDB session protocol failed and cleanup could not be confirmed: ${stopped.reason}. Retry close_gdb_session with session_id "${session.id}".`
+            : "The GDB session protocol failed and the session was closed. Start a new GDB session to continue.",
         ...(stopped.status === "incomplete"
           ? {
               cleanup: {

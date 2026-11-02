@@ -149,6 +149,7 @@ const detachOutcomes = new WeakMap<
   object,
   "confirmed" | "unconfirmed" | "inferior-ended"
 >();
+const forcedShutdowns = new WeakSet<object>();
 
 const isVerifiedDetachResult = (
   result: unknown,
@@ -227,12 +228,17 @@ const finishExitedDebuggerSession = async (
   debuggerName: string,
   platform: NodeJS.Platform,
   status: "stopped" | "already_exited",
+  forced = false,
 ): Promise<OwnedDebuggerStopResult> => {
   try {
     session.supervisor.limitAdditionalOutputBytes(
       MAX_LATE_DEBUGGER_OUTPUT_BYTES,
     );
     if (!(await session.supervisor.waitForOutputClose(1_000))) {
+      if (forced && platform !== "win32") {
+        session.supervisor.unrefOutputStreams();
+        session.supervisor.dispose();
+      }
       return {
         status: "incomplete",
         reason:
@@ -242,6 +248,10 @@ const finishExitedDebuggerSession = async (
       };
     }
   } catch (cause: unknown) {
+    if (forced && platform !== "win32") {
+      session.supervisor.unrefOutputStreams();
+      session.supervisor.dispose();
+    }
     return {
       status: "incomplete",
       reason:
@@ -269,6 +279,8 @@ export const stopOwnedDebuggerProcess = async (
   } = {},
 ): Promise<OwnedDebuggerStopResult> => {
   const platform = options.platform ?? process.platform;
+  const isForced = options.force === true || forcedShutdowns.has(session);
+  if (options.force) forcedShutdowns.add(session);
   if (session.exited) {
     if (detachAttempts.has(session))
       return {
@@ -277,8 +289,10 @@ export const stopOwnedDebuggerProcess = async (
       };
     const detachOutcome = detachOutcomes.get(session);
     if (
-      detachOutcome === "unconfirmed" ||
-      (detachOutcome === undefined && session.inferiorStateUnknown?.() === true)
+      !isForced &&
+      (detachOutcome === "unconfirmed" ||
+        (detachOutcome === undefined &&
+          session.inferiorStateUnknown?.() === true))
     ) {
       try {
         if ((await session.verifyInferiorsEndedAfterExit?.()) !== true)
@@ -299,6 +313,7 @@ export const stopOwnedDebuggerProcess = async (
       debuggerName,
       platform,
       "already_exited",
+      isForced,
     );
   }
   if (platform === "win32")
@@ -310,7 +325,7 @@ export const stopOwnedDebuggerProcess = async (
   // owned completion fact, even when terminating the debugger later fails.
   // Retrying the command transport can no longer improve that fact and may
   // block termination if shutdown already made the transport unavailable.
-  if (!options.force && detachOutcomes.get(session) !== "confirmed") {
+  if (!isForced && detachOutcomes.get(session) !== "confirmed") {
     try {
       if (session.detachInferior === undefined) {
         detachOutcomes.set(session, "unconfirmed");
@@ -353,6 +368,7 @@ export const stopOwnedDebuggerProcess = async (
         debuggerName,
         platform,
         "stopped",
+        isForced,
       );
     return {
       status: "incomplete",
@@ -364,6 +380,7 @@ export const stopOwnedDebuggerProcess = async (
     debuggerName,
     platform,
     "stopped",
+    isForced,
   );
 };
 
