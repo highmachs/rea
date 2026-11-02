@@ -236,9 +236,17 @@ it("unrefs output streams on forced stop when output streams fail to close", asy
 
   expect(result).toMatchObject({
     status: "incomplete",
-    reason: /output streams did not close/i,
+    reason: /inherited output streams are still open/i,
   });
   expect(supervisor.unrefOutputStreams).toHaveBeenCalledOnce();
+  expect(supervisor.dispose).not.toHaveBeenCalled();
+
+  supervisor.waitForOutputClose.mockResolvedValue(true);
+  const retried = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+  expect(retried).toEqual({ status: "already_exited" });
   expect(supervisor.dispose).toHaveBeenCalledOnce();
 });
 

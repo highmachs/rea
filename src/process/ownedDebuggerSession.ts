@@ -237,7 +237,6 @@ const finishExitedDebuggerSession = async (
     if (!(await session.supervisor.waitForOutputClose(1_000))) {
       if (forced && platform !== "win32") {
         session.supervisor.unrefOutputStreams();
-        session.supervisor.dispose();
       }
       return {
         status: "incomplete",
@@ -250,7 +249,6 @@ const finishExitedDebuggerSession = async (
   } catch (cause: unknown) {
     if (forced && platform !== "win32") {
       session.supervisor.unrefOutputStreams();
-      session.supervisor.dispose();
     }
     return {
       status: "incomplete",
